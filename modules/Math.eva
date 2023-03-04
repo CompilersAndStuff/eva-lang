@@ -1,0 +1,15 @@
+(def abs (value)
+  (if (< value 0)
+      (- value)
+      value))
+
+(def mul (x y) (* x y))
+
+(def square (x)
+  (mul x x))
+
+(var MAX_VALUE 1000)
+
+(export (def cubic (x) (mul (mul x x) x)))
+
+(exports square abs MAX_VALUE)

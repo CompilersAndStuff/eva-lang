@@ -58,6 +58,22 @@ class Transformer {
     const [_tag, exp, val] = incExp;
     return ['set', exp, ['-', exp, val]];
   }
+
+  transformInlineExports(moduleExp) {
+    const [_tag, _name, body] = moduleExp;
+    const [_, ...exportedDefs] = body.at(-1)[0] === 'exports' ? body.pop() : [];
+    return body
+      .reduce((acc, e) => {
+        if (e[0] === 'export') {
+          if (e[1][0] === 'def' || e[1][0] === 'var') {
+            return { body: [...acc.body, e[1]], exportedDefs: [...acc.exportedDefs, e[1][1]] };
+          }
+          throw new SyntaxError(`Inline exports allowed only on def & var expressions. Actual: ${e[1]}`);
+        }
+        return { ...acc, body: [...acc.body, e] }
+      }
+        , { body: [], exportedDefs })
+  }
 }
 
 module.exports = Transformer;

@@ -1,0 +1,12 @@
+(def map (f coll)
+  (if (= (first coll) null)
+      coll
+      (begin
+       (def iter (acc coll)
+         (if (= (first coll) null)
+             acc
+             (iter (conj acc (f (first coll))) (rest coll))))
+
+       (iter (list) coll))))
+
+(print (map (lambda (x) (* x x)) (list 1 2 3 4 5)))

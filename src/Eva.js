@@ -1,12 +1,18 @@
 const Environment = require('./Environment');
 const ContextStack = require('./ContextStack');
 const Transformer = require('./transform/Transformer');
+const evaParser = require('../parser/evaParser');
+const fs = require('fs');
 
 class Eva {
   constructor(global = GlobalEnvironment) {
     this.global = global;
     this.contextStack = new ContextStack(global);
     this._transformer = new Transformer();
+  }
+
+  evalGlobal(exp) {
+    return this._evalBody(exp, this.global);
   }
 
   eval(exp, env = this.global) {
@@ -38,6 +44,26 @@ class Eva {
         return this.eval(setExp, env);
       }
 
+      if (exp[0] === 'list') {
+        const [_tag, ...body] = exp;
+        return body.reduce((acc, e) => [...acc, this.eval(e, env)], []);
+      }
+
+      if (exp[0] === 'first') {
+        const [_tag, body] = exp;
+        return this.eval(body, env)[0] || null;
+      }
+
+      if (exp[0] === 'rest') {
+        const [_tag, body] = exp;
+        return this.eval(body, env).slice(1);
+      }
+
+      if (exp[0] === 'conj') {
+        const [_tag, to, el] = exp;
+        return [...this.eval(to, env), this.eval(el, env)];
+      }
+
       if (exp[0] === 'begin') {
         const blockEnv = new Environment({}, env);
         return this._evalBlock(exp, blockEnv);
@@ -49,8 +75,16 @@ class Eva {
       }
 
       if (exp[0] === 'set') {
-        const [_, name, value] = exp;
-        return env.assign(name, this.eval(value, env));
+        const [_, ref, value] = exp;
+
+        if (ref[0] === 'prop') {
+          const [_tag, instance, prop] = ref;
+          const instanceEnv = this.eval(instance, env);
+
+          return instanceEnv.define(prop, this.eval(value, env))
+        }
+
+        return env.assign(ref, this.eval(value, env));
       }
 
       if (this._isVariableName(exp)) return env.lookup(exp);
@@ -82,6 +116,88 @@ class Eva {
         return result;
       }
 
+      if (exp[0] === 'class') {
+        const [_tag, name, parent, body] = exp;
+
+        const parentEnv = this.eval(parent, env) || env;
+
+        const classEnv = new Environment({}, parentEnv);
+
+        this._evalBody(body, classEnv);
+
+        return env.define(name, classEnv);
+      }
+
+      if (exp[0] === 'new') {
+        const [_tag, classname, ...args] = exp;
+
+        const classEnv = this.eval(classname, env);
+
+        const instanceEnv = new Environment({}, classEnv);
+
+        this._evalUserDefinedFunction(
+          classEnv.lookup('constructor'),
+          [instanceEnv, ...args.map(a => this.eval(a, env))],
+          [`<${classname}>.constructor`],
+        )
+
+        return instanceEnv;
+      }
+
+      if (exp[0] === 'super') {
+        const [_tag, className] = exp;
+        return this.eval(className, env).parent;
+      }
+
+      if (exp[0] === 'prop') {
+        const [_tag, instance, prop] = exp;
+        const instanceEnv = this.eval(instance, env);
+        return instanceEnv.lookup(prop);
+      };
+
+      if (exp[0] === 'module') {
+        const [_tag, name] = exp;
+        const { body, exportedDefs } = this._transformer.transformInlineExports(exp)
+
+        const moduleEnv = new Environment({}, env);
+
+        this._evalBody(body, moduleEnv);
+
+        if (exportedDefs && exportedDefs.length) {
+          const focusedEnv = new Environment({}, null);
+          exportedDefs.forEach(def => focusedEnv.define(def, moduleEnv.lookup(def)));
+          return env.define(name, focusedEnv);
+        }
+        return env.define(name, moduleEnv);
+      };
+
+      if (exp[0] === 'import') {
+        const [_tag, ...importBody] = exp;
+
+        const referredNames = Array.isArray(importBody[0]) ? importBody[0] : null;
+        const moduleName = importBody.at(-1);
+        let importResult;
+
+        try { // Shitty loader caching
+          this.global.lookup(moduleName);
+        } catch {
+          const moduleSrc = fs.readFileSync(
+            `../modules/${moduleName}.eva`, //WOAH, smells funny
+            'utf-8',
+          );
+
+          const body = evaParser.parse(`(begin ${moduleSrc})`);
+          const moduleExpression = ['module', moduleName, body];
+
+          importResult = this.eval(moduleExpression, this.global);
+        } finally {
+          if (referredNames && referredNames.length) {
+            referredNames.forEach(name => this.eval(['var', name, ['prop', moduleName, name]], env));
+          }
+          return importResult || null;
+        }
+      }
+
       if (exp[0] === 'def') {
         // JIT, kinda :)
         const varExp = this._transformer.transformDefToVarLambda(exp);
@@ -100,22 +216,25 @@ class Eva {
 
       if (Array.isArray(exp)) {
         const fn = this.eval(exp[0], env);
+        const args = exp.slice(1).map(arg => this.eval(arg, env));
 
         return typeof fn === 'function'
-          ? this._evalNativeFunction(fn, exp, env)
-          : this._evalUserDefinedFunction(fn, exp, env);
+          ? this._evalNativeFunction(fn, args, exp, env)
+          : this._evalUserDefinedFunction(fn, args, exp);
       }
 
       throw `Unimplemented expr${JSON.stringify(exp)}`;
     } catch (error) {
-      console.log(`\x1b[31mAn error occurred: ${error}\x1b[0m`);
-      this.contextStack.printStackTrace();
+      console.log(`\x1b[31mAn error occurred:\n ${error}\x1b[0m`);
+      if (this.contextStack.stackIsNotEmpty()) {
+        this.contextStack.printStackTrace();
+      }
+      console.log();
       this.contextStack.purgeStack();
     }
   }
 
-  _evalNativeFunction(fn, exp, env) {
-    const args = exp.slice(1).map(arg => this.eval(arg, env));
+  _evalNativeFunction(fn, args, exp, env) {
     const fnName = `<Native function>: ${exp[0]}`
     this.contextStack.pushFrame(fnName, env);
     let evalRes = fn(...args);
@@ -123,8 +242,7 @@ class Eva {
     return evalRes;
   }
 
-  _evalUserDefinedFunction(fn, exp, env) {
-    const args = exp.slice(1).map(arg => this.eval(arg, env));
+  _evalUserDefinedFunction(fn, args, exp) {
     const fnName = typeof exp[0] === 'string' ? exp[0] : '<Anonymous function>';
     const activationRecord = {};
     fn.params.forEach((param, index) => activationRecord[param] = args[index]);
@@ -156,6 +274,7 @@ class Eva {
 
 const GlobalEnvironment = new Environment({
   null: null,
+  undefined: null,
 
   true: true,
   false: false,
