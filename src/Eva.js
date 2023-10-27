@@ -44,6 +44,16 @@ class Eva {
         return this.eval(setExp, env);
       }
 
+      if (exp[0] === '>js-fn') {
+        return (...args) => this._evalUserDefinedFunction(this.eval(exp[1], env), args, exp.slice(1))
+      }
+
+      if (exp[0] === '.') {
+        const [_tag, objectRef, method, ...args] = exp;
+        const evaledArgs = args.map(arg => this.eval(arg, env));
+        return global[objectRef][method].apply(null, evaledArgs);
+      }
+
       if (exp[0] === 'list') {
         const [_tag, ...body] = exp;
         return body.reduce((acc, e) => [...acc, this.eval(e, env)], []);

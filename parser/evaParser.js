@@ -109,7 +109,7 @@ const lexRules = [[/^\(/, function() { return "'('"; }],
 [/^\s+/, function() { /* skip whitespace */ }],
 [/^"[^\"]*"/, function() { return 'STRING' }],
 [/^[+-]?([0-9]*[.])?[0-9]+/, function() { return 'NUMBER' }],
-[/^[\w\-+*=<>/]+/, function() { return 'SYMBOL' }]];
+[/^[\w\-+*=<>\./]+/, function() { return 'SYMBOL' }]];
 const lexRulesByConditions = {"INITIAL":[0,1,2,3,4,5]};
 
 const EOF_TOKEN = {

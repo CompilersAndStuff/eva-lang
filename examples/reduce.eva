@@ -1,0 +1,11 @@
+(def reduce (f init-acc coll)
+  (if (= (first coll) null)
+      coll
+      (begin
+       (def iter (acc coll)
+         (if (= (first coll) null)
+             acc
+             (iter (f acc (first coll)) (rest coll))))
+       (iter (or init-acc (first coll)) (if (= init-acc null) (rest coll) coll)))))
+
+(print (reduce + null (list 1 2 3 4 5)))

@@ -1,0 +1,5 @@
+(. global setInterval
+   (>js-fn
+    (lambda (arg)
+      (. console log arg)))
+   1000)
